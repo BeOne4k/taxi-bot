@@ -3,6 +3,10 @@ import { t } from '../locales/texts.js';
 import { track } from '../utils/analytics.js';
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 export async function handleAbout(sock, jid) {
   const lang = getLang(jid);
   await track(jid, 'about_opened', lang);
@@ -11,8 +15,9 @@ export async function handleAbout(sock, jid) {
 }
 
 
+
 export async function sendAbout(sock, jid) {
-  const PROJECT_ROOT = path.resolve(__dirname, "..");
+  const PROJECT_ROOT = path.resolve(__dirname, "../..");
     const imgPaths = [
         path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-1-2.jpg"),
         path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-3-4.jpg"),
