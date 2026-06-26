@@ -156,7 +156,7 @@ async function processTaxiText(sock, jid, lang, text) {
   if (!stores.length) {
     await sock.sendMessage(jid, { text: t(lang, 'no_shops_region') });
   } else {
-    for (const store of stores.slice(0, 3)) {
+    for (const store of stores) {
       const line = `🏪 *${store.name}*\n📍 ${store.address}${store.hours ? '\n🕐 ' + store.hours : ''}\n🗺 https://www.google.com/maps?q=${store.lat},${store.lon}`;
       await sock.sendMessage(jid, { text: line });
     }

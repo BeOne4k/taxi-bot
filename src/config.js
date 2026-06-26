@@ -12,7 +12,7 @@ export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 export const MANAGER_WA_JID = process.env.MANAGER_WA_JID || '';
-export const MANAGER_USERNAME = process.env.MANAGER_USERNAME || '';
+export const MANAGER_PHONE = process.env.MANAGER_PHONE || '';
 export const MANAGER_WORK_START = parseInt(process.env.MANAGER_WORK_START || '10', 10);
 export const MANAGER_WORK_END = parseInt(process.env.MANAGER_WORK_END || '18', 10);
 

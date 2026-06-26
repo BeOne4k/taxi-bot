@@ -2,7 +2,7 @@ import { getLang, setState, getState, getStateData, updateStateData, clearState 
 import { t } from '../locales/texts.js';
 import { track } from '../utils/analytics.js';
 import { askGemini } from '../utils/gemini.js';
-import { MANAGER_USERNAME } from '../config.js';
+import { MANAGER_PHONE } from '../config.js';
 
 const HISTORY_KEY = 'gemini_history';
 const MAX_HISTORY_TURNS = 10;
@@ -37,9 +37,9 @@ export async function handleHelpInput(sock, jid, message) {
   // Contact manager
   if (text === '1') {
     clearState(jid);
-    if (MANAGER_USERNAME) {
+    if (MANAGER_PHONE) {
       await sock.sendMessage(jid, {
-        text: t(lang, 'manager_username_prompt', { username: MANAGER_USERNAME }) + '\n\n0 - ' + t(lang, 'main_menu'),
+        text: t(lang, 'manager_phone_prompt', { phone: MANAGER_PHONE }) + '\n\n0 - ' + t(lang, 'main_menu'),
       });
     } else {
       await sock.sendMessage(jid, { text: t(lang, 'manager_transferred') + '\n\n0 - ' + t(lang, 'main_menu') });

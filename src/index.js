@@ -93,14 +93,14 @@ async function handleMessage(sock, jid, message) {
     }
 
     // If user has never selected a language yet, show welcome
-    if (state === 'idle' && !getLang(jid)) {
+    if (!getLang(jid)) {
       await handleStart(sock, jid, null);
       setState(jid, 'welcome:lang');
       return;
     }
 
-    // Show main menu for any message when idle
-    await sendMainMenu(sock, jid, lang);
+    // Route main menu (handles "1","2",... AND falls back to showing menu)
+    await routeMainMenu(sock, jid, lang, text, message);
     return;
   }
 
@@ -116,7 +116,7 @@ async function handleMessage(sock, jid, message) {
   }
 
   // ── Main menu navigation ───────────────────────────────────────────────────
-  if (state === 'idle' || state === 'menu') {
+  if (state === 'menu') {
     await routeMainMenu(sock, jid, lang, text, message);
     return;
   }
@@ -131,12 +131,8 @@ async function handleMessage(sock, jid, message) {
 
   // Loyalty
   if (state.startsWith('loyalty:')) {
-    if (text === '1' && state === 'idle') {
-      // menu item
-    } else {
-      await handleLoyaltyInput(sock, jid, message);
-      return;
-    }
+    await handleLoyaltyInput(sock, jid, message);
+    return;
   }
 
   // Manager chat

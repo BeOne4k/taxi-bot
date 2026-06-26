@@ -35,7 +35,7 @@ export function findStoresByLocation(lat, lon, radiusKm = SEARCH_RADIUS_KM) {
     }
   }
   results.sort((a, b) => a.distance_km - b.distance_km);
-  return results.slice(0, 5);
+  return results;
 }
 
 export function findNearestStore(lat, lon) {

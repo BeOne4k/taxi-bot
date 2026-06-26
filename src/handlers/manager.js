@@ -2,7 +2,7 @@ import { getLang, setState, getState, clearState } from '../utils/userData.js';
 import { t } from '../locales/texts.js';
 import { track } from '../utils/analytics.js';
 import { askAi } from '../utils/ai.js';
-import { MANAGER_WA_JID, MANAGER_USERNAME, MANAGER_WORK_START, MANAGER_WORK_END, TZ_OFFSET_HOURS } from '../config.js';
+import { MANAGER_WA_JID, MANAGER_PHONE, MANAGER_WORK_START, MANAGER_WORK_END, TZ_OFFSET_HOURS } from '../config.js';
 
 function isManagerOnline() {
   const now = new Date(Date.now() + TZ_OFFSET_HOURS * 3600 * 1000);
@@ -48,8 +48,8 @@ export async function handleManagerInput(sock, jid, message) {
     await track(jid, 'manager_transferred', lang);
 
     let response;
-    if (MANAGER_USERNAME) {
-      response = t(lang, 'manager_username_prompt', { username: MANAGER_USERNAME });
+    if (MANAGER_PHONE) {
+      response = t(lang, 'manager_phone_prompt', { phone: MANAGER_PHONE });
     } else {
       response = t(lang, 'manager_transferred');
     }
@@ -83,8 +83,8 @@ export async function handleManagerInput(sock, jid, message) {
     clearState(jid);
 
     let response;
-    if (MANAGER_USERNAME) {
-      response = t(lang, 'manager_username_prompt', { username: MANAGER_USERNAME });
+    if (MANAGER_PHONE) {
+      response = t(lang, 'manager_phone_prompt', { phone: MANAGER_PHONE });
     } else {
       response = t(lang, 'manager_transferred');
     }
