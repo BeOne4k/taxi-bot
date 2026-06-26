@@ -12,6 +12,7 @@ export async function handleAbout(sock, jid) {
 
 
 export async function sendAbout(sock, jid) {
+  const PROJECT_ROOT = path.resolve(__dirname, "..");
     const imgPaths = [
         path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-1-2.jpg"),
         path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-3-4.jpg"),
