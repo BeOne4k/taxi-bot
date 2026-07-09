@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -13,8 +13,9 @@ import { handleManagerMenu, handleManagerInput } from './handlers/manager.js';
 import { handleHelpMenu, handleHelpInput } from './handlers/help.js';
 import { handleAbout, handleSocials } from './handlers/misc.js';
 import { setSender, startWebhookServer } from './webhookApi.js';
+import { createThrottledSender } from './utils/messageQueue.js';
 
-const logger = pino({ level: 'debug' });
+const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
 
 async function startBot() {
   const { state: authState, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
@@ -25,11 +26,22 @@ async function startBot() {
     logger,
     auth: authState,
     printQRInTerminal: false,
+    // Обычный fingerprint браузера вместо стандартного "Baileys" —
+    // сессии, привязанные как левое/незнакомое приложение, чаще ловят рейт-лимиты.
+    browser: Browsers.ubuntu('Chrome'),
+    // Не показываем аккаунт "онлайн" сразу после коннекта — выглядит менее ботоподобно.
+    markOnlineOnConnect: false,
   });
+
+  // Все исходящие сообщения теперь идут через очередь с паузами и имитацией
+  // набора текста — это единственное место, где нужно было это подключить,
+  // handlers/* не трогали.
+  const throttledSendMessage = createThrottledSender(sock);
+  const throttledSock = { ...sock, sendMessage: throttledSendMessage };
 
   // Expose sendMessage to webhook
   setSender(async (jid, text) => {
-    await sock.sendMessage(jid, { text });
+    await throttledSendMessage(jid, { text });
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -43,7 +55,11 @@ async function startBot() {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
       console.log(`[WA] Disconnected (code=${code}). Reconnect: ${shouldReconnect}`);
-      if (shouldReconnect) startBot();
+      if (shouldReconnect) {
+        // Небольшая пауза перед реконнектом — частые мгновенные переподключения
+        // сами по себе выглядят подозрительно для WhatsApp.
+        setTimeout(() => startBot(), 3000);
+      }
     } else if (connection === 'open') {
       console.log('[WA] ✅ Connected to WhatsApp!');
     }
@@ -59,7 +75,7 @@ async function startBot() {
       if (!jid || jid.endsWith('@g.us')) continue; // ignore groups
 
       try {
-        await handleMessage(sock, jid, msg.message);
+        await handleMessage(throttledSock, jid, msg.message);
       } catch (err) {
         console.error(`[Bot] Error handling message from ${jid}:`, err);
       }
