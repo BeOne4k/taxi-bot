@@ -14,7 +14,7 @@ import { handleHelpMenu, handleHelpInput } from './handlers/help.js';
 import { handleAbout, handleSocials } from './handlers/misc.js';
 import { setSender, startWebhookServer } from './webhookApi.js';
 
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'debug' });
 
 async function startBot() {
   const { state: authState, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
