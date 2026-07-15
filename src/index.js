@@ -1,7 +1,6 @@
 import 'dotenv/config';
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import pino from 'pino';
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth, MessageMedia } = pkg;
 import qrcodeTerminal from 'qrcode-terminal';
 
 import { getLang, getState, setState, clearState } from './utils/userData.js';
@@ -15,74 +14,188 @@ import { handleAbout, handleSocials } from './handlers/misc.js';
 import { setSender, startWebhookServer } from './webhookApi.js';
 import { createThrottledSender } from './utils/messageQueue.js';
 
-const logger = pino({ level: process.env.LOG_LEVEL || 'silent' });
+// ── jid helpers ──────────────────────────────────────────────────────────
+// The rest of the codebase (handlers/*, .env, saved registry entries) was
+// written against Baileys-style jids (number@s.whatsapp.net / @lid).
+// whatsapp-web.js addresses chats as number@c.us. We normalize on the way
+// in/out so nothing else in the app has to change.
+function toWwebId(jid) {
+  if (!jid) return jid;
+  return jid.replace(/@s\.whatsapp\.net$/, '@c.us').replace(/@lid$/, '@c.us');
+}
+
+/**
+ * whatsapp-web.js can hand back @lid ids for incoming messages in
+ * multi-device mode. Resolve to the stable @c.us id via the contact,
+ * same trick the working bot (whatsapp-bot) uses.
+ */
+async function resolveChatId(msg) {
+  try {
+    const contact = await msg.getContact();
+    if (contact?.id?._serialized) {
+      return contact.id._serialized; // e.g. "66812345678@c.us"
+    }
+  } catch (e) {
+    // fall through
+  }
+  return (msg.from || '').replace(/:\d+@/, '@');
+}
+
+function guessMimeType(filePath) {
+  const ext = (filePath.split('.').pop() || '').toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+/**
+ * Builds the sock-like object handlers/* already expect:
+ *   sock.sendMessage(jid, { text })
+ *   sock.sendMessage(jid, { image: Buffer | { url }, caption })
+ *   sock.sendPresenceUpdate(state, jid)
+ * so none of the existing handler code needs to change.
+ */
+function buildSock(client) {
+  async function withRetry(fn, attempts = 2) {
+    let lastErr;
+    for (let i = 0; i <= attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const isTimeout = /timed out|Runtime\.callFunctionOn|Protocol error/i.test(err?.message || '');
+        if (!isTimeout || i === attempts) break;
+        console.warn(`[Bot] sendMessage timeout, retry ${i + 1}/${attempts}...`);
+        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      }
+    }
+    throw lastErr;
+  }
+
+  async function rawSend(jid, content) {
+    const chatId = toWwebId(jid);
+
+    if (content?.text !== undefined) {
+      return withRetry(() => client.sendMessage(chatId, content.text));
+    }
+
+    if (content?.image !== undefined) {
+      let media;
+      if (Buffer.isBuffer(content.image)) {
+        media = new MessageMedia('image/jpeg', content.image.toString('base64'));
+      } else if (content.image?.url) {
+        media = await MessageMedia.fromUrl(content.image.url, { unsafeMime: true });
+      } else if (typeof content.image === 'string') {
+        media = new MessageMedia(guessMimeType(content.image), Buffer.from(content.image).toString('base64'));
+      } else {
+        throw new Error('Unsupported image payload');
+      }
+      return withRetry(() => client.sendMessage(chatId, media, { caption: content.caption || undefined }));
+    }
+
+    throw new Error(`Unsupported message content: ${JSON.stringify(content)}`);
+  }
+
+  async function sendPresenceUpdate(state, jid) {
+    try {
+      const chat = await client.getChatById(toWwebId(jid));
+      if (state === 'composing') await chat.sendStateTyping();
+      else await chat.clearState();
+    } catch {
+      // best-effort, same as before
+    }
+  }
+
+  return { sendMessage: rawSend, sendPresenceUpdate };
+}
 
 async function startBot() {
-  const { state: authState, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    logger,
-    auth: authState,
-    printQRInTerminal: false,
-    // Обычный fingerprint браузера вместо стандартного "Baileys" —
-    // сессии, привязанные как левое/незнакомое приложение, чаще ловят рейт-лимиты.
-    browser: Browsers.ubuntu('Chrome'),
-    // Не показываем аккаунт "онлайн" сразу после коннекта — выглядит менее ботоподобно.
-    markOnlineOnConnect: false,
+  const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: './data/.wwebjs_auth' }),
+    // Дефолтного protocolTimeout (30с) иногда не хватает на медленной машине —
+    // тогда puppeteer падает с "Runtime.callFunctionOn timed out" на sendMessage.
+    puppeteer: {
+      headless: true,
+      protocolTimeout: 180000,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        // Chrome троттлит JS на "невидимой" странице (актуально и в headless
+        // на Windows) — из-за этого evaluate() внутри whatsapp-web.js может
+        // не укладываться в таймаут. Отключаем троттлинг явно.
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+      ],
+    },
   });
 
-  // Все исходящие сообщения теперь идут через очередь с паузами и имитацией
-  // набора текста — это единственное место, где нужно было это подключить,
-  // handlers/* не трогали.
+  const sock = buildSock(client);
+
+  // Очередь с паузами и имитацией набора текста остаётся — это просто
+  // приятнее для пользователей (сообщения не сыпятся пачкой). Строгой
+  // необходимости прятаться от антиспама тут уже нет: это настоящая
+  // веб-сессия в браузере, а не реимплементация протокола.
   const throttledSendMessage = createThrottledSender(sock);
   const throttledSock = { ...sock, sendMessage: throttledSendMessage };
 
-  // Expose sendMessage to webhook
   setSender(async (jid, text) => {
     await throttledSendMessage(jid, { text });
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  client.on('qr', (qr) => {
+    console.log('\n📱 Scan this QR code with WhatsApp:\n');
+    qrcodeTerminal.generate(qr, { small: true });
+  });
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      console.log('\n📱 Scan this QR code with WhatsApp:\n');
-      qrcodeTerminal.generate(qr, { small: true });
-    }
-    if (connection === 'close') {
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log(`[WA] Disconnected (code=${code}). Reconnect: ${shouldReconnect}`);
-      if (shouldReconnect) {
-        // Небольшая пауза перед реконнектом — частые мгновенные переподключения
-        // сами по себе выглядят подозрительно для WhatsApp.
-        setTimeout(() => startBot(), 3000);
-      }
-    } else if (connection === 'open') {
-      console.log('[WA] ✅ Connected to WhatsApp!');
+  client.on('authenticated', () => console.log('[WA] Authenticated'));
+
+  client.on('ready', () => {
+    console.log('[WA] ✅ Connected to WhatsApp!');
+  });
+
+  client.on('auth_failure', (msg) => {
+    console.error('[WA] Auth failure:', msg);
+    process.exit(1);
+  });
+
+  client.on('disconnected', (reason) => {
+    console.warn('[WA] Disconnected:', reason);
+    process.exit(1);
+  });
+
+  client.on('message_create', async (msg) => {
+    if (msg.fromMe) return;
+
+    try {
+      const chat = await msg.getChat();
+      if (chat.isGroup) return;
+
+      const jid = await resolveChatId(msg);
+
+      // Adapt whatsapp-web.js's message shape into the minimal Baileys-style
+      // shape handlers/* already understand (message.conversation /
+      // message.locationMessage), so downstream handler code is untouched.
+      const message = {
+        conversation: msg.body || '',
+        locationMessage: msg.location
+          ? { degreesLatitude: msg.location.latitude, degreesLongitude: msg.location.longitude }
+          : undefined,
+      };
+
+      await handleMessage(throttledSock, jid, message);
+    } catch (err) {
+      console.error('[Bot] Error handling message:', err);
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-
-    for (const msg of messages) {
-      if (msg.key.fromMe) continue; // ignore own messages
-
-      const jid = msg.key.remoteJid;
-      if (!jid || jid.endsWith('@g.us')) continue; // ignore groups
-
-      try {
-        await handleMessage(throttledSock, jid, msg.message);
-      } catch (err) {
-        console.error(`[Bot] Error handling message from ${jid}:`, err);
-      }
-    }
-  });
-
-  return sock;
+  await client.initialize();
+  return client;
 }
 
 async function handleMessage(sock, jid, message) {
