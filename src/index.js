@@ -171,10 +171,9 @@ async function startBot() {
 
   client.on('message_create', async (msg) => {
     if (msg.fromMe) return;
-
+    
     try {
-      const chat = await msg.getChat();
-      if (chat.isGroup) return;
+      if (msg.from.endsWith("@g.us")) return;
 
       const jid = await resolveChatId(msg);
 
