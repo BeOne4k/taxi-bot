@@ -16,13 +16,28 @@ export async function handleAbout(sock, jid) {
 
 
 
+// Соответствие языка бота и суффикса в имени файла картинки.
+// Английские картинки без суффикса, русские — "_ru", тайские — "_thai".
+const LANG_SUFFIXES = { ru: "_ru", th: "_thai" };
+
 export async function sendAbout(sock, jid) {
   const PROJECT_ROOT = path.resolve(__dirname, "../..");
-    const imgPaths = [
-        path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-1-2.jpg"),
-        path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-3-4.jpg"),
-        path.join(PROJECT_ROOT, "data", "images", "taxi-affiliate-project-5-6.jpg"),
-    ];
+  const imagesDir = path.join(PROJECT_ROOT, "data", "images");
+  const lang = getLang(jid);
+  const suffix = LANG_SUFFIXES[lang] || "";
+
+  const baseNames = [
+    "taxi-affiliate-project-1-2",
+    "taxi-affiliate-project-3-4",
+    "taxi-affiliate-project-5-6",
+  ];
+
+  const imgPaths = baseNames.map((baseName) => {
+    const localized = path.join(imagesDir, `${baseName}${suffix}.jpg`);
+    // Если локализованной картинки нет — подстрахуемся английской версией
+    if (suffix && fs.existsSync(localized)) return localized;
+    return path.join(imagesDir, `${baseName}.jpg`);
+  });
 
     for (const imgPath of imgPaths) {
         await sock.sendMessage(jid, {
